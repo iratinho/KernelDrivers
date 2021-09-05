@@ -177,3 +177,10 @@ function(wdk_add_library _target)
         target_include_directories(${_target} SYSTEM PRIVATE "${WDK_ROOT}/Include/wdf/kmdf/${WDK_KMDF}")
     endif()
 endfunction()
+
+function(create_console_app _target)
+    cmake_parse_arguments(WDK "" "KMDF;WINVER" "" ${ARGN})
+
+    add_executable(${_target} ${WDK_UNPARSED_ARGUMENTS})
+    set_target_properties(Client PROPERTIES LINK_FLAGS /SUBSYSTEM:CONSOLE)
+endfunction()
