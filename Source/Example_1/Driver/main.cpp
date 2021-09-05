@@ -4,6 +4,13 @@
 
 #include <ntddk.h>
 
+// User mode application should have a struct just like this
+// TODO: Share this struct with Driver and Client source
+typedef struct _Data
+{
+    char* Buffer;
+} DATA, *PDATA;
+
 /*
  *  This driver acts as an example on how to handle data sent from user mode application and as
  * the minimum initial setup for a software driver
@@ -16,6 +23,10 @@
  *   2 - Register dispatch routines to handle native and custom IRP codes (https://docs.microsoft.com/en-us/windows-hardware/drivers/kernel/writing-dispatch-routines)
  *
  */
+
+// More info about IOCTL creation at https://docs.microsoft.com/en-us/windows-hardware/drivers/kernel/defining-i-o-control-codes
+// TODO Share this IOCTL with user mode source
+#define IOCTL_Device_Function CTL_CODE(0x8000, 0x8000, METHOD_IN_DIRECT , FILE_ANY_ACCESS)
 
 void DriverUnload(_In_ _DRIVER_OBJECT* DriverObject);
 NTSTATUS HandleRequestPackage(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp);
@@ -72,7 +83,7 @@ NTSTATUS DriverEntry(_In_ _DRIVER_OBJECT* DriverObject, _In_ PUNICODE_STRING Reg
     /*
      *  Now its time to create dispatch routines, everytime there is a I/O request package (IRP) the I/O manager will access the dispatch
      *  table for the driver and will call the routines linked with the IRP. In code this can be accessed from DriverObject->MajorFunction[IRP_CODE].
-     *  There are default IRP codes, but we can also create custom IRP and we will do that in this example.
+     *  There are default IRP codes, but we can also create custom IOCTL that will arrive in a IRP_MJ_DEVICE_CONTROL request.
      *
      *  Note: We can link the same function pointer to different IRP codes if we want.
      *
@@ -80,6 +91,7 @@ NTSTATUS DriverEntry(_In_ _DRIVER_OBJECT* DriverObject, _In_ PUNICODE_STRING Reg
      */
     DriverObject->MajorFunction[IRP_MJ_CREATE] = HandleRequestPackage; 
     DriverObject->MajorFunction[IRP_MJ_CLOSE] = HandleRequestPackage;
+    DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = HandleRequestPackage;
 
     return STATUS_SUCCESS;
 }
@@ -96,20 +108,41 @@ NTSTATUS HandleRequestPackage(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
 {
     UNREFERENCED_PARAMETER(DeviceObject);
     
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    if(Irp->Type == IRP_MJ_DEVICE_CONTROL)
+    {
+        // More information about the IRP stack at https://docs.microsoft.com/en-us/windows-hardware/drivers/kernel/i-o-stack-locations
+        PIO_STACK_LOCATION Stack = IoGetCurrentIrpStackLocation(Irp);
+        
+        if(Stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_Device_Function)
+        {
+            // Just to make sure that our input is valid
+            if(Stack->Parameters.DeviceIoControl.InputBufferLength < sizeof(DATA))
+            {
+                Status = STATUS_BUFFER_TOO_SMALL;
+            }
+            else
+            {
+                // Its time to retrieve the data sent from user land (Type3InputBuffer)
+                const PDATA Data = static_cast<PDATA>(Stack->Parameters.DeviceIoControl.Type3InputBuffer);
+                DbgPrint(Data->Buffer);
+            }
+        }
+        else
+        {
+            Status = STATUS_INVALID_DEVICE_REQUEST;   
+        }
+    }
+
     /*
-    *  Everytime we handle a IRP dispatch we must manually complete the
-    *  request. This code shows how to complete a basic request.
+    *  Everytime we handle a IRP dispatch we must manually complete therequest.
     *
     *  https://docs.microsoft.com/en-us/windows-hardware/drivers/ifs/completing-the-irp
     */
-    if(Irp->Type == IRP_MJ_CREATE || Irp->Type == IRP_MJ_CLOSE)
-    {
-        Irp->IoStatus.Status = STATUS_SUCCESS;
-        Irp->IoStatus.Information = 0;
-        IoCompleteRequest(Irp, IO_NO_INCREMENT);	
-    }
-
-    // TODO: Handle custom IRP code
-
+    Irp->IoStatus.Status = Status;
+    Irp->IoStatus.Information = 0;
+    IoCompleteRequest(Irp, IO_NO_INCREMENT);	
+    
     return Irp->IoStatus.Status;
 }
